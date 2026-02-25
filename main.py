@@ -1,7 +1,10 @@
-# BoilerPlate Generated using https://github.com/xditya/TelethonSnippets Extension.
-# Dependencies to be pre-installed: 
-# - telethon: Telegram Library.
-# - python-decouple: To load config vars from .env files or environment variables.
+#!/usr/bin/env python3
+"""
+Reaction Saver - Telegram Userbot
+
+Automatically saves messages to a log chat when you react to them.
+Uses fast parallel file transfers for efficient media handling.
+"""
 
 import logging
 import os
@@ -10,84 +13,99 @@ import tempfile
 import time
 
 from decouple import config
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, utils
 from telethon.sessions import StringSession
 from telethon.tl import types
 from telethon.tl.types import UpdateEditMessage, MessageMediaDocument, MessageMediaPhoto
 import fasttelethon
 
-# initializing logger
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="[%(levelname)s] %(asctime)s - %(message)s"
+    level=logging.INFO, 
+    format="[%(levelname)s] %(asctime)s - %(message)s"
 )
-log = logging.getLogger("TelethonSnippets")
+log = logging.getLogger("ReactionSaver")
 
-# fetching variales from env
+# Load configuration from environment
 try:
     API_ID = config("API_ID", cast=int)
     API_HASH = config("API_HASH")
     SESSION = config("SESSION")
     LOG_CHAT = config("LOG_CHAT", cast=int)
-except BaseException as ex:
-    log.info(ex)
-
-
-log.info("Connecting bot.")
-try:
-    client = TelegramClient(StringSession(SESSION), api_id=API_ID, api_hash=API_HASH).start()
-except BaseException as e:
-    log.warning(e)
+except Exception as ex:
+    log.error(f"Configuration error: {ex}")
     exit(1)
 
+# Initialize Telegram client
+log.info("Connecting to Telegram...")
+try:
+    client = TelegramClient(
+        StringSession(SESSION), 
+        api_id=API_ID, 
+        api_hash=API_HASH
+    ).start()
+except Exception as e:
+    log.error(f"Failed to connect: {e}")
+    exit(1)
+
+# Get current user info
 ubot_self = client.loop.run_until_complete(client.get_me())
 
-# Track messages we've already forwarded to avoid duplicates
+# Track processed messages to avoid duplicates
 forwarded_messages = set()
 
-# functions
+# Event Handlers
 @client.on(events.NewMessage(outgoing=True, pattern="^.alive"))
-async def new_alive(event):
-# Make the userbotbot edit an outgoing .alive message.
-   await event.edit("Reaction saver is online!")
+async def alive_command(event):
+    """Check if the userbot is running."""
+    await event.edit("✅ Reaction Saver is online!")
    
 @client.on(events.Raw(UpdateEditMessage))
-async def outgoing(event):
+async def handle_reaction(event):
+    """Handle message edits (including reactions) and save reacted messages to LOG_CHAT."""
+    
     # Check if message has reactions
-    if hasattr(event.message, 'reactions') and event.message.reactions:
-        if event.message.reactions.recent_reactions:
-            # Check if any reaction is from the userbot
-            has_my_reaction = False
-            for reaction in event.message.reactions.recent_reactions:
-                if reaction.peer_id.user_id == ubot_self.id:
-                    has_my_reaction = True
-                    break
-            
-            # If we have a reaction and haven't forwarded this message yet
-            message_key = f"{event.message.peer_id}_{event.message.id}"
-            
-            if has_my_reaction and message_key not in forwarded_messages:
-                try:
-                    # Copy the message to LOG_CHAT (without "forwarded from" tag)
-                    message = event.message
-                    caption = message.message or ""
-                    
-                    # Get chat/user information
-                    try:
-                        entity = await client.get_entity(message.peer_id)
-                        if hasattr(entity, 'username') and entity.username:
-                            chat_info = f"@{entity.username}"
-                        elif hasattr(entity, 'first_name'):
-                            chat_info = entity.first_name
-                            if hasattr(entity, 'last_name') and entity.last_name:
-                                chat_info += f" {entity.last_name}"
-                        elif hasattr(entity, 'title'):
-                            chat_info = entity.title
-                        else:
-                            chat_info = f"ID: {message.peer_id.user_id if hasattr(message.peer_id, 'user_id') else message.peer_id}"
-                    except:
-                        chat_info = f"ID: {message.peer_id.user_id if hasattr(message.peer_id, 'user_id') else message.peer_id}"
-                    
-                    if message.media:
+    if not (hasattr(event.message, 'reactions') and event.message.reactions):
+        return
+    
+    if not event.message.reactions.recent_reactions:
+        return
+    
+    # Check if any reaction is from the userbot
+    has_my_reaction = any(
+        reaction.peer_id.user_id == ubot_self.id 
+        for reaction in event.message.reactions.recent_reactions
+    )
+    
+    if not has_my_reaction:
+        return
+    
+    # Check if we've already processed this message
+    message_key = f"{event.message.peer_id}_{event.message.id}"
+    if message_key in forwarded_messages:
+        return
+    
+    try:
+        message = event.message
+        caption = message.message or ""
+        
+        # Get chat/user information for progress display
+        try:
+            entity = await client.get_entity(message.peer_id)
+            if hasattr(entity, 'username') and entity.username:
+                chat_info = f"@{entity.username}"
+            elif hasattr(entity, 'first_name'):
+                chat_info = entity.first_name
+                if hasattr(entity, 'last_name') and entity.last_name:
+                    chat_info += f" {entity.last_name}"
+            elif hasattr(entity, 'title'):
+                chat_info = entity.title
+            else:
+                chat_info = f"ID: {message.peer_id.user_id if hasattr(message.peer_id, 'user_id') else message.peer_id}"
+        except:
+            chat_info = f"ID: {message.peer_id.user_id if hasattr(message.peer_id, 'user_id') else message.peer_id}"
+        
+        if message.media:
                         # Try to send media directly first
                         try:
                             await client.send_file(LOG_CHAT, message.media, caption=caption)
@@ -192,13 +210,17 @@ async def outgoing(event):
                             except Exception as e:
                                 await progress_msg.edit(f"❌ Failed to process media: {e}")
                                 log.error(f"Failed to download/upload media: {e}")
-                    else:
-                        # Text message only
-                        await client.send_message(LOG_CHAT, caption)
-                        forwarded_messages.add(message_key)
-                        log.info(f"Message {event.message.id} copied to LOG_CHAT")
-                except Exception as e:
-                    log.error(f"Failed to copy message: {e}")
+        else:
+            # Text message only
+            await client.send_message(LOG_CHAT, caption)
+            forwarded_messages.add(message_key)
+            log.info(f"Text message {event.message.id} copied to LOG_CHAT")
+    
+    except Exception as e:
+        log.error(f"Failed to copy message: {e}")
 
-log.info("\nClient has started as %d.\n", ubot_self.id)
-client.run_until_disconnected()
+
+if __name__ == "__main__":
+    log.info(f"Reaction Saver started successfully! (User ID: {ubot_self.id})")
+    log.info("React to any message to save it to your log chat.")
+    client.run_until_disconnected()
