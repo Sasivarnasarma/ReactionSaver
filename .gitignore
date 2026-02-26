@@ -30,3 +30,6 @@ ENV/
 *.gif
 *.pdf
 *.zip
+
+# Logs
+*.log

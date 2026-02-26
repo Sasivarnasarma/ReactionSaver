@@ -1,3 +1,4 @@
 python-decouple
 telethon
-pyaesni
+pyaes
+pyaesni ; platform_machine == "x86_64"

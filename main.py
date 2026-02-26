@@ -11,6 +11,8 @@ import os
 import asyncio
 import tempfile
 import time
+from datetime import datetime
+import math
 
 from decouple import config
 from telethon import TelegramClient, events, utils
@@ -21,8 +23,9 @@ import fasttelethon
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, 
-    format="[%(levelname)s] %(asctime)s - %(message)s"
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.FileHandler('reaction_saver.log', 'w', 'utf-8'), logging.StreamHandler()],
+    level=logging.INFO
 )
 log = logging.getLogger("ReactionSaver")
 
@@ -54,15 +57,51 @@ ubot_self = client.loop.run_until_complete(client.get_me())
 # Track processed messages to avoid duplicates
 forwarded_messages = set()
 
+# Track stats
+start_time = datetime.now()
+total_files_saved = 0
+total_size_saved = 0
+
+def human_readable_size(size_bytes):
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"
+
 # Event Handlers
 @client.on(events.NewMessage(outgoing=True, pattern="^.alive"))
 async def alive_command(event):
     """Check if the userbot is running."""
     await event.edit("✅ Reaction Saver is online!")
+
+@client.on(events.NewMessage(outgoing=True, pattern="^.stats"))
+async def stats_command(event):
+    """Show bot statistics."""
+    now = datetime.now()
+    uptime_delta = now - start_time
+    
+    # Format uptime
+    days = uptime_delta.days
+    hours, remainder = divmod(uptime_delta.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
+    
+    stats_text = (
+        "📊 **Reaction Saver Statistics**\n\n"
+        f"⏱ **Uptime:** `{uptime_str}`\n"
+        f"📁 **Total Saved:** `{total_files_saved}`\n"
+        f"💾 **Total Size:** `{human_readable_size(total_size_saved)}`"
+    )
+    await event.edit(stats_text)
    
 @client.on(events.Raw(UpdateEditMessage))
 async def handle_reaction(event):
     """Handle message edits (including reactions) and save reacted messages to LOG_CHAT."""
+    global total_files_saved, total_size_saved
     
     # Check if message has reactions
     if not (hasattr(event.message, 'reactions') and event.message.reactions):
@@ -110,6 +149,15 @@ async def handle_reaction(event):
                         try:
                             await client.send_file(LOG_CHAT, message.media, caption=caption)
                             forwarded_messages.add(message_key)
+                            
+                            # Update stats
+                            total_files_saved += 1
+                            if hasattr(message.media, 'document') and message.media.document:
+                                total_size_saved += message.media.document.size
+                            elif hasattr(message.media, 'photo') and message.media.photo:
+                                # For photos, approximate size or use actual if available
+                                total_size_saved += getattr(message.media.photo, 'size', 0)
+                            
                             log.info(f"Message {event.message.id} copied to LOG_CHAT")
                         except Exception as e:
                             # If direct send fails, download and re-upload with progress
@@ -132,6 +180,12 @@ async def handle_reaction(event):
                                     file_path = await client.download_media(message.media)
                                     await client.send_file(LOG_CHAT, file_path, caption=caption)
                                     await progress_msg.delete()
+                                    
+                                    # Update stats
+                                    total_files_saved += 1
+                                    if os.path.exists(file_path):
+                                        total_size_saved += os.path.getsize(file_path)
+                                        
                                     if file_path and os.path.exists(file_path):
                                         os.remove(file_path)
                                     forwarded_messages.add(message_key)
@@ -198,11 +252,14 @@ async def handle_reaction(event):
                                 # Send the uploaded file with proper media
                                 await client.send_file(LOG_CHAT, media, caption=caption)
                                 
-                                # Delete progress message
-                                await progress_msg.delete()
+                                # Update stats
+                                total_files_saved += 1
+                                if os.path.exists(file_path):
+                                    total_size_saved += os.path.getsize(file_path)
                                 
                                 # Clean up downloaded file
                                 if file_path and os.path.exists(file_path):
+                                    temp_file.close()
                                     os.remove(file_path)
                                 
                                 forwarded_messages.add(message_key)
@@ -210,10 +267,17 @@ async def handle_reaction(event):
                             except Exception as e:
                                 await progress_msg.edit(f"❌ Failed to process media: {e}")
                                 log.error(f"Failed to download/upload media: {e}")
+                            finally:
+                                # Delete progress message
+                                await progress_msg.delete()
         else:
             # Text message only
             await client.send_message(LOG_CHAT, caption)
             forwarded_messages.add(message_key)
+            
+            # Update stats
+            total_files_saved += 1
+            
             log.info(f"Text message {event.message.id} copied to LOG_CHAT")
     
     except Exception as e:

@@ -52,6 +52,23 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### 6. Run with Docker (Optional)
+
+If you prefer using Docker:
+
+1. Build and start the container:
+   ```bash
+   docker compose up -d
+   ```
+2. View logs:
+   ```bash
+   docker compose logs -f
+   ```
+3. Stop the container:
+   ```bash
+   docker compose down
+   ```
+
 ## Usage
 
 Once running, simply react to any message in Telegram. The message will be automatically saved to your configured log chat.
@@ -59,6 +76,7 @@ Once running, simply react to any message in Telegram. The message will be autom
 **Commands:**
 
 - `.alive` - Check if the bot is running
+- `.stats` - View bot statistics (uptime, files saved, total size)
 
 ## Requirements
 

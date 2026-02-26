@@ -26,7 +26,7 @@ try:
 except ImportError:
     async_encrypt_attachment = None
 
-log: logging.Logger = logging.getLogger("telethon")
+log: logging.Logger = logging.getLogger("FastTelethon")
 
 TypeLocation = Union[Document, InputDocumentFileLocation, InputPeerPhotoFileLocation,
                      InputFileLocation, InputPhotoFileLocation]

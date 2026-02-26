@@ -1,0 +1,12 @@
+services:
+  reaction-saver:
+    image: reaction-saver:latest
+    build: .
+    container_name: reaction-saver
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
